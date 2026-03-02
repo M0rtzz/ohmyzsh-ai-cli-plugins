@@ -29,11 +29,21 @@ NC='\033[0m'
 # Configuration
 MAX_DEPTH=3                 # Maximum recursion depth
 TIMEOUT_SECONDS=5           # Command execution timeout
+STRICT_MODE="${STRICT_MODE:-0}"
+
+# Timeout command detection (macOS often has no GNU timeout)
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+fi
 
 # Temporary files
 ISSUES_FILE=$(mktemp)
 CHECKED_CMDS_FILE=$(mktemp)
-trap "rm -f $ISSUES_FILE $CHECKED_CMDS_FILE" EXIT
+SKIPPED_CHECKS_FILE=$(mktemp)
+trap "rm -f $ISSUES_FILE $CHECKED_CMDS_FILE $SKIPPED_CHECKS_FILE" EXIT
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}    Zsh Completion Plugin True Recursive Detection Tool${NC}"
@@ -42,26 +52,93 @@ echo ""
 echo -e "${MAGENTA}Configuration:${NC}"
 echo -e "  Maximum recursion depth: ${MAX_DEPTH}"
 echo -e "  Command timeout: ${TIMEOUT_SECONDS} seconds"
+if [[ -n "$TIMEOUT_CMD" ]]; then
+    echo -e "  Timeout command: ${TIMEOUT_CMD}"
+else
+    echo -e "  Timeout command: ${YELLOW}not found${NC}"
+fi
+echo -e "  Strict mode: ${STRICT_MODE}"
+if [[ -z "$TIMEOUT_CMD" ]]; then
+    echo -e "${YELLOW}⚠ timeout/gtimeout not found. Commands will run without timeout protection.${NC}"
+    if [[ "$STRICT_MODE" == "1" ]]; then
+        echo -e "${RED}✗ STRICT_MODE=1 requires timeout or gtimeout${NC}"
+        exit 2
+    fi
+fi
 echo ""
 
 # ========================================
 # Helper function: Execute command and get help output (with timeout)
 # ========================================
+PROBE_OUTPUT=""
+PROBE_RC=0
+PROBE_TIMEOUT_REACHED=0
+HELP_OUTPUT_STATUS="ok"
+
+run_help_probe() {
+    local cmd="$1"
+    local output rc
+    PROBE_TIMEOUT_REACHED=0
+
+    set +e
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        output=$("$TIMEOUT_CMD" "$TIMEOUT_SECONDS" bash -c "$cmd" 2>&1)
+        rc=$?
+    else
+        output=$(bash -c "$cmd" 2>&1)
+        rc=$?
+    fi
+    set -e
+
+    PROBE_OUTPUT="$output"
+    PROBE_RC=$rc
+
+    if [[ $rc -eq 124 ]] || [[ $rc -eq 137 ]]; then
+        PROBE_TIMEOUT_REACHED=1
+    fi
+}
+
 get_help_output() {
     local cmd="$1"
     local output
+    local timed_out=0
+    HELP_OUTPUT_STATUS="ok"
 
     # Try --help
-    output=$(timeout $TIMEOUT_SECONDS bash -c "$cmd --help 2>&1" 2>/dev/null || true)
+    run_help_probe "$cmd --help"
+    output="$PROBE_OUTPUT"
+    if [[ $PROBE_TIMEOUT_REACHED -eq 1 ]]; then
+        timed_out=1
+    fi
 
     # If --help fails or output is empty, try -h
     if [[ -z "$output" ]] || [[ "$output" == *"unknown option"* ]]; then
-        output=$(timeout $TIMEOUT_SECONDS bash -c "$cmd -h 2>&1" 2>/dev/null || true)
+        run_help_probe "$cmd -h"
+        output="$PROBE_OUTPUT"
+        if [[ $PROBE_TIMEOUT_REACHED -eq 1 ]]; then
+            timed_out=1
+        fi
     fi
 
     # If still fails, try without arguments
     if [[ -z "$output" ]] || [[ "$output" == *"unknown option"* ]]; then
-        output=$(timeout $TIMEOUT_SECONDS bash -c "$cmd 2>&1" 2>/dev/null || true)
+        run_help_probe "$cmd"
+        output="$PROBE_OUTPUT"
+        if [[ $PROBE_TIMEOUT_REACHED -eq 1 ]]; then
+            timed_out=1
+        fi
+    fi
+
+    if [[ -z "$output" ]]; then
+        if [[ $timed_out -eq 1 ]]; then
+            HELP_OUTPUT_STATUS="timeout"
+        else
+            HELP_OUTPUT_STATUS="empty"
+        fi
+    elif [[ "$output" == *"command not found"* ]] || [[ "$output" == *"No such file"* ]]; then
+        HELP_OUTPUT_STATUS="invalid"
+    elif [[ $timed_out -eq 1 ]]; then
+        HELP_OUTPUT_STATUS="partial-timeout"
     fi
 
     echo "$output"
@@ -99,6 +176,7 @@ extract_commands_from_help() {
         echo "$commands_section" | \
             grep -E "^  $full_cmd " | \
             awk -v col="$col" '{print $col}' | \
+            sed 's/|.*//g' | \
             sed 's/\[.*//g; s/<.*//g' | \
             grep -v "^$" | \
             grep -v "^help$" | \
@@ -107,6 +185,7 @@ extract_commands_from_help() {
         # Traditional format: extract first column
         echo "$commands_section" | \
             grep -E "^  [a-z][a-z0-9|_-]*" | \
+            sed 's/|.*//g' | \
             sed 's/\[.*//g; s/<.*//g' | \
             awk '{print $1}' | \
             grep -v "^$" | \
@@ -133,13 +212,13 @@ extract_options_from_help() {
         echo "$help_output" | sed -n '/^Options:/,/^$/p; /^Flags:/,/^$/p; /^Global Options:/,/^$/p; /^选项：/,/^$/p; /^标志：/,/^$/p' | \
             grep -E '^[[:space:]]+-' | \
             awk '{print $1, $2}' | \
-            grep -oE -- '--[a-z][a-z0-9_-]*'
+            grep -oE -- '--[a-zA-Z][a-zA-Z0-9_-]*'
         # Extract short options: only from first two fields of each line
         echo "$help_output" | sed -n '/^Options:/,/^$/p; /^Flags:/,/^$/p; /^Global Options:/,/^$/p; /^选项：/,/^$/p; /^标志：/,/^$/p' | \
             grep -E '^[[:space:]]+-' | \
             awk '{print $1, $2}' | \
-            grep -oE -- '-[a-z]([^a-z]|$)' | \
-            sed 's/[^-a-z]//g'
+            grep -oE -- '-[A-Za-z]([^A-Za-z]|$)' | \
+            sed 's/[^-A-Za-z]//g'
     } | sort -u
 }
 
@@ -189,6 +268,7 @@ extract_commands_from_plugin() {
             grep -E "^[[:space:]]*'" | \
             sed -E "s/^[[:space:]]*'([a-z][a-z0-9|_-]*):.*'/\1/"
     } | \
+        sed 's/|.*//g' | \
         grep -v "^help$" | \
         grep -v "^$" | \
         sort -u
@@ -229,14 +309,14 @@ extract_options_from_plugin() {
             # Extract {-x,--xxx} format options
             sed -n "/^${func_name}() {/,/^}/p" "$plugin_file" 2>/dev/null | \
                 sed -n '/_arguments/,/case \$state/p' | \
-                grep -oE '\{-[a-zA-Z],--[a-z][a-z0-9_-]*\}' | \
+                grep -oE '\{-[a-zA-Z],--[a-zA-Z][a-zA-Z0-9_-]*\}' | \
                 sed 's/{//g; s/}//g; s/,/\n/g'
 
             # Extract standalone --xxx options
             sed -n "/^${func_name}() {/,/^}/p" "$plugin_file" 2>/dev/null | \
                 sed -n '/_arguments/,/case \$state/p' | \
-                grep -oE '(^|[^{-])--[a-z][a-z0-9_-]*' | \
-                grep -oE -- '--[a-z][a-z0-9_-]*'
+                grep -oE '(^|[^{-])--[a-zA-Z][a-zA-Z0-9_-]*' | \
+                grep -oE -- '--[a-zA-Z][a-zA-Z0-9_-]*'
 
             # Extract standalone -x options
             sed -n "/^${func_name}() {/,/^}/p" "$plugin_file" 2>/dev/null | \
@@ -269,7 +349,7 @@ extract_options_from_plugin() {
                         in_case = 0
                     }
                 }
-            ' | grep -oE '\{-[a-zA-Z],--[a-z][a-z0-9_-]*\}' | \
+            ' | grep -oE '\{-[a-zA-Z],--[a-zA-Z][a-zA-Z0-9_-]*\}' | \
                 sed 's/{//g; s/}//g; s/,/\n/g'
 
             echo "$func_body" | awk -v cmd="$subcmd" '
@@ -278,8 +358,8 @@ extract_options_from_plugin() {
                     print
                     if (/;;/) { in_case = 0 }
                 }
-            ' | grep -oE '(^|[^{-])--[a-z][a-z0-9_-]*' | \
-                grep -oE -- '--[a-z][a-z0-9_-]*'
+            ' | grep -oE '(^|[^{-])--[a-zA-Z][a-zA-Z0-9_-]*' | \
+                grep -oE -- '--[a-zA-Z][a-zA-Z0-9_-]*'
 
             echo "$func_body" | awk -v cmd="$subcmd" '
                 $0 ~ "^[[:space:]]*.*" cmd "[)|]" { in_case = 1 }
@@ -329,6 +409,9 @@ check_command_recursive() {
         indent="  ${indent}"
     done
 
+    # Display current command being checked
+    echo -e "${indent}${CYAN}[$depth] ${full_cmd}${NC}"
+
     # Get help output
     local help_output=$(get_help_output "$full_cmd")
 
@@ -336,6 +419,9 @@ check_command_recursive() {
     if [[ -z "$help_output" ]] || \
        [[ "$help_output" == *"command not found"* ]] || \
        [[ "$help_output" == *"No such file"* ]]; then
+        echo -e "${indent}  ${YELLOW}⚠ Skipped: unable to read help output (${HELP_OUTPUT_STATUS})${NC}"
+        echo "${full_cmd}|${HELP_OUTPUT_STATUS}" >> "$SKIPPED_CHECKS_FILE"
+        echo ""
         return
     fi
 
@@ -346,11 +432,6 @@ check_command_recursive() {
     # Extract from plugin
     local cmds_from_plugin=$(extract_commands_from_plugin "$plugin_file" "$cmd_path" "$tool_name")
     local opts_from_plugin=$(extract_options_from_plugin "$plugin_file" "$cmd_path" "$tool_name")
-
-    # Display current command being checked
-    echo -e "${indent}${CYAN}[$depth] ${full_cmd}${NC}"
-
-    local has_issue=0
 
     # Check subcommands
     if [[ -n "$cmds_from_help" ]]; then
@@ -364,7 +445,6 @@ check_command_recursive() {
                 echo -e "${indent}    - ${cmd}"
                 echo "1" >> "$ISSUES_FILE"
             done <<< "$missing_cmds"
-            has_issue=1
         else
             if [[ -n "$cmds_from_plugin" ]]; then
                 local count=$(echo "$cmds_from_plugin" | grep -v "^$" | wc -l | tr -d ' ')
@@ -395,7 +475,6 @@ check_command_recursive() {
             if [[ $shown -gt 10 ]]; then
                 echo -e "${indent}    ${YELLOW}... and $((shown - 10)) more option(s) not shown${NC}"
             fi
-            has_issue=1
         else
             if [[ -n "$opts_from_plugin" ]]; then
                 local count=$(echo "$opts_from_plugin" | grep -v "^$" | wc -l | tr -d ' ')
@@ -447,6 +526,11 @@ check_cli_tool() {
     local tool_name="$1"
     local tool_cmd="$2"
     local plugin_file="$3"
+    local parser_name="$4"
+
+    if [[ -z "$parser_name" ]]; then
+        parser_name="$tool_name"
+    fi
 
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}Checking ${tool_name} (command: ${tool_cmd})${NC}"
@@ -469,7 +553,7 @@ check_cli_tool() {
     > "$CHECKED_CMDS_FILE"
 
     # Start recursive check from root command
-    check_command_recursive "$tool_cmd" "" "$plugin_file" "$tool_name" 0
+    check_command_recursive "$tool_cmd" "" "$plugin_file" "$parser_name" 0
 
     echo ""
 }
@@ -479,14 +563,15 @@ check_cli_tool() {
 # ========================================
 
 # Check each tool
-check_cli_tool "claude" "claude" "$SCRIPT_DIR/claude/claude.plugin.zsh"
-check_cli_tool "codex" "codex" "$SCRIPT_DIR/codex/codex.plugin.zsh"
-check_cli_tool "gemini" "gemini" "$SCRIPT_DIR/gemini/gemini.plugin.zsh"
+check_cli_tool "claude" "claude" "$SCRIPT_DIR/claude/claude.plugin.zsh" "claude-code"
+check_cli_tool "codex" "codex" "$SCRIPT_DIR/codex/codex.plugin.zsh" "codex"
+check_cli_tool "gemini" "gemini" "$SCRIPT_DIR/gemini/gemini.plugin.zsh" "gemini-cli"
 
 # ========================================
 # Summary
 # ========================================
 TOTAL_ISSUES=$(wc -l < "$ISSUES_FILE" | tr -d ' ')
+TOTAL_SKIPPED=$(wc -l < "$SKIPPED_CHECKS_FILE" | tr -d ' ')
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}    Check Complete${NC}"
@@ -508,9 +593,31 @@ else
     echo "4. Re-run this script to verify the fix"
     echo "5. Run 'exec zsh' to reload the shell"
 fi
+
+if [[ $TOTAL_SKIPPED -gt 0 ]]; then
+    echo ""
+    echo -e "${YELLOW}⚠ Skipped ${TOTAL_SKIPPED} command check(s):${NC}"
+    sed -n '1,10p' "$SKIPPED_CHECKS_FILE" | while IFS='|' read -r cmd reason; do
+        echo "  - ${cmd} (${reason})"
+    done
+    if [[ $TOTAL_SKIPPED -gt 10 ]]; then
+        echo "  ... and $((TOTAL_SKIPPED - 10)) more"
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}Tips:${NC}"
 echo "- Adjust MAX_DEPTH to control recursion depth (current: ${MAX_DEPTH})"
 echo "- Adjust TIMEOUT_SECONDS to control command timeout (current: ${TIMEOUT_SECONDS} seconds)"
 echo "- Not all detected missing items need to be fixed, decide based on actual usage"
 echo ""
+
+if [[ $TOTAL_ISSUES -gt 0 ]]; then
+    exit 1
+fi
+
+if [[ "$STRICT_MODE" == "1" ]] && [[ $TOTAL_SKIPPED -gt 0 ]]; then
+    exit 2
+fi
+
+exit 0
