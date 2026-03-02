@@ -21,13 +21,14 @@ A collection of intelligent Zsh completion plugins for popular AI CLI tools, pro
 Complete auto-completion for [Claude Code](https://claude.ai/code), Anthropic's official CLI tool for Claude.
 
 **Supported Commands:**
+- `agents` - List configured agents
+- `auth` - Manage authentication
+- `install` - Install Claude Code native version
 - `mcp` - Configure and manage MCP servers
 - `plugin` - Manage Claude Code plugins
-- `migrate-installer` - Migrate from global npm installation
 - `setup-token` - Configure long-term authentication token
 - `doctor` - Check auto-updater health
-- `update` - Check and install updates
-- `install` - Install Claude Code native version
+- `update|upgrade` - Check and install updates
 
 **Aliases:**
 - `cc` → `claude`
@@ -39,13 +40,19 @@ Complete auto-completion for [Claude Code](https://claude.ai/code), Anthropic's 
 Full auto-completion support for [Codex](https://github.com/stablecaps/codex), an AI-powered coding assistant.
 
 **Supported Commands:**
+- `app` - Launch Codex desktop app
 - `exec` - Run Codex non-interactively
+- `review` - Run code review non-interactively
 - `mcp` - Manage MCP servers
 - `login/logout` - Manage authentication
+- `app-server` - Run app server tooling
+- `debug` - Run debugging tools
 - `sandbox` - Run commands in Codex-provided sandbox
 - `apply` - Apply latest diff to local working tree
 - `resume` - Resume previous interactive session
+- `fork` - Fork previous interactive session
 - `cloud` - Browse Codex Cloud tasks
+- `features` - Inspect and update feature flags
 
 **Aliases:**
 - `cdx` → `codex`
@@ -64,6 +71,8 @@ Intelligent completion for [Gemini CLI](https://github.com/google-gemini/gemini-
 **Supported Commands:**
 - `mcp` - Manage MCP servers
 - `extensions` - Manage Gemini CLI extensions
+- `skills` - Manage agent skills
+- `hooks` - Manage Gemini CLI hooks
 
 **Aliases:**
 - `gm` → `gemini`
@@ -246,6 +255,23 @@ which codex
 
 # Check Gemini CLI
 which gemini
+```
+
+### Sync Check on macOS/Linux
+
+Use the built-in sync checker to verify plugin coverage after upgrading CLI tools:
+
+```bash
+bash check_sync.sh
+```
+
+Behavior notes:
+- Uses `timeout` when available, or `gtimeout` if installed via Homebrew.
+- If neither is available, checks still run without timeout protection (may be slower).
+- Set `STRICT_MODE=1` to require timeout support and fail fast in CI:
+
+```bash
+STRICT_MODE=1 bash check_sync.sh
 ```
 
 ## Project Structure
