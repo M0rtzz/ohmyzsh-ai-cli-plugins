@@ -274,6 +274,18 @@ Behavior notes:
 STRICT_MODE=1 bash check_sync.sh
 ```
 
+### Interactive E2E Test
+
+Run the full interactive automation test (real `zsh` + `Tab` via `expect`):
+
+```bash
+bash scripts/test_interactive_completion.sh
+```
+
+Optional environment variables:
+- `EXPECT_TIMEOUT=20` to increase per-assert timeout
+- `KEEP_TMP_HOME=1` to keep the temporary isolated `HOME` for debugging
+
 ## Project Structure
 
 ```
@@ -284,6 +296,8 @@ ohmyzsh-plugins/
 │   └── codex.plugin.zsh
 ├── gemini/
 │   └── gemini.plugin.zsh
+├── scripts/
+│   └── test_interactive_completion.sh
 ├── install.sh
 ├── uninstall.sh
 ├── check_sync.sh
