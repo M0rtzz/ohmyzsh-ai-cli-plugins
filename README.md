@@ -282,9 +282,18 @@ Run the full interactive automation test (real `zsh` + `Tab` via `expect`):
 bash scripts/test_interactive_completion.sh
 ```
 
+What it does:
+- Auto-discovers command/subcommand/option cases from live `claude/codex/gemini --help` output
+- Runs each case in a real interactive `zsh` session and sends `Tab`
+- Fails with non-zero exit code if any expected completion is missing
+
 Optional environment variables:
-- `EXPECT_TIMEOUT=20` to increase per-assert timeout
+- `EXPECT_TIMEOUT=4` to increase per-assert timeout (default: `2`)
 - `KEEP_TMP_HOME=1` to keep the temporary isolated `HOME` for debugging
+- `MAX_DEPTH=2` to limit recursive command depth
+- `CASE_LIMIT=200` to run only first N generated cases for quick iteration
+- `EXPECT_VERBOSE=1` to print PASS lines for every case
+- `STRICT_HELP=0` to allow skipped help output parsing without failing generation
 
 ## Project Structure
 
