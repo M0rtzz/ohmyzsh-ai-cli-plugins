@@ -152,6 +152,8 @@ _codex_mcp() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]' \
         '1: :->command' \
         '*::arg:->args'
@@ -174,23 +176,45 @@ _codex_mcp() {
                 add)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--url[Server URL]:url:' \
+                        '--env[Environment variables for stdio transport]:env:' \
+                        '--bearer-token-env-var[Environment variable with bearer token]:env_var:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
                         {-h,--help}'[Show help]' \
                         '*:file:_files'
                     ;;
                 get)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--json[Emit JSON output]' \
                         {-h,--help}'[Show help]' \
                         '*::server:( $(codex mcp list 2>/dev/null | grep -E "^\s+\w+" | awk "{print \$1}") )'
                     ;;
                 list)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--json[Emit JSON output]' \
                         {-h,--help}'[Show help]'
                     ;;
-                login|logout|remove)
+                login)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--scopes[OAuth scopes list]:scopes:' \
+                        {-h,--help}'[Show help]' \
+                        '*::server:( $(codex mcp list 2>/dev/null | grep -E "^\s+\w+" | awk "{print \$1}") )'
+                    ;;
+                logout|remove)
+                    _arguments \
+                        {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
                         {-h,--help}'[Show help]' \
                         '*::server:( $(codex mcp list 2>/dev/null | grep -E "^\s+\w+" | awk "{print \$1}") )'
                     ;;
@@ -206,6 +230,10 @@ _codex_app_server() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
+        '--listen[Transport endpoint URL]:url:' \
+        '--analytics-default-enabled[Enable analytics by default]' \
         {-h,--help}'[Show help]' \
         '1: :->command' \
         '*::arg:->args'
@@ -221,9 +249,23 @@ _codex_app_server() {
             ;;
         args)
             case $line[1] in
-                generate-json-schema|generate-ts)
+                generate-json-schema)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        {-o,--out}'[Output directory]:dir:_files -/' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--experimental[Include experimental methods and fields]' \
+                        {-h,--help}'[Show help]'
+                    ;;
+                generate-ts)
+                    _arguments \
+                        {-c,--config}'[Override config value]:config:' \
+                        {-o,--out}'[Output directory]:dir:_files -/' \
+                        {-p,--prettier}'[Path to Prettier executable]:file:_files' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--experimental[Include experimental methods and fields]' \
                         {-h,--help}'[Show help]'
                     ;;
             esac
@@ -316,7 +358,10 @@ _codex_debug_app_server_send_message_v2() {
 _codex_apply() {
     _arguments \
         {-c,--config}'[Override config value]:config:' \
-        {-h,--help}'[Show help]'
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
+        {-h,--help}'[Show help]' \
+        '1:task_id:'
 }
 
 # cloud subcommand completion
@@ -326,7 +371,10 @@ _codex_cloud() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]' \
+        {-V,--version}'[Show version]' \
         '1: :->command' \
         '*::arg:->args'
 
@@ -347,6 +395,11 @@ _codex_cloud() {
                 exec)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--attempts[Number of attempts]:count:' \
+                        '--branch[Git branch]:branch:' \
+                        '--env[Environment identifier]:env_id:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
                         {-h,--help}'[Show help]'
                     ;;
                 status)
@@ -395,6 +448,8 @@ _codex_cloud() {
 _codex_completion() {
     _arguments \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]'
 }
 
@@ -405,7 +460,27 @@ _codex_exec() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
+        {-i,--image}'[Attach image to prompt]:file:_files' \
+        {-m,--model}'[Model to use]:model:' \
+        '--oss[Use local open-source provider]' \
+        '--local-provider[Specify local provider]:provider:(lmstudio ollama)' \
+        {-p,--profile}'[Configuration profile]:profile:' \
+        {-s,--sandbox}'[Sandbox mode]:mode:(read-only workspace-write danger-full-access)' \
+        '--full-auto[Low-friction sandboxed automatic execution]' \
+        '--dangerously-bypass-approvals-and-sandbox[Disable sandbox and approvals]' \
+        '--skip-git-repo-check[Allow outside Git repository]' \
+        '--ephemeral[Do not persist session files]' \
+        '--progress-cursor[Force cursor-based progress output]' \
+        '--json[Print events as JSONL]' \
+        '--color[Output color mode]:color:(always never auto)' \
+        '--output-schema[Path to output schema file]:file:_files' \
+        {-o,--output-last-message}'[Write last message to file]:file:_files' \
+        {-C,--cd}'[Working directory]:dir:_files -/' \
+        '--add-dir[Additional writable directory]:dir:_files -/' \
         {-h,--help}'[Show help]' \
+        {-V,--version}'[Show version]' \
         '1: :->command' \
         '*::arg:->args'
 
@@ -423,6 +498,18 @@ _codex_exec() {
                 resume)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--last[Continue most recent session]' \
+                        '--all[Show all sessions without cwd filtering]' \
+                        {-i,--image}'[Attach image to prompt]:file:_files' \
+                        {-m,--model}'[Model to use]:model:' \
+                        {-o,--output-last-message}'[Write last message to file]:file:_files' \
+                        '--full-auto[Low-friction sandboxed automatic execution]' \
+                        '--dangerously-bypass-approvals-and-sandbox[Disable sandbox and approvals]' \
+                        '--skip-git-repo-check[Allow outside Git repository]' \
+                        '--ephemeral[Do not persist session files]' \
+                        '--json[Print events as JSONL]' \
                         {-h,--help}'[Show help]'
                     ;;
                 review)
@@ -455,6 +542,8 @@ _codex_features() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]' \
         '1: :->command' \
         '*::arg:->args'
@@ -474,6 +563,8 @@ _codex_features() {
                 list)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
                         {-h,--help}'[Show help]'
                     ;;
                 enable|disable)
@@ -517,6 +608,8 @@ _codex_login() {
                 status)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
                         {-h,--help}'[Show help]'
                     ;;
             esac
@@ -528,6 +621,8 @@ _codex_login() {
 _codex_logout() {
     _arguments \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]'
 }
 
@@ -535,6 +630,8 @@ _codex_logout() {
 _codex_mcp_server() {
     _arguments \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]'
 }
 
@@ -572,7 +669,8 @@ _codex_resume() {
         '--search[Enable web search tool]' \
         '--add-dir[Additional writable directory]:dir:_files -/' \
         '--no-alt-screen[Disable alternate screen mode]' \
-        {-h,--help}'[Show help]'
+        {-h,--help}'[Show help]' \
+        {-V,--version}'[Show version]'
 }
 
 # fork subcommand completion
@@ -609,6 +707,8 @@ _codex_sandbox() {
 
     _arguments -C \
         {-c,--config}'[Override config value]:config:' \
+        '--enable[Enable feature]:feature:' \
+        '--disable[Disable feature]:feature:' \
         {-h,--help}'[Show help]' \
         '1: :->command' \
         '*::arg:->args'
@@ -625,9 +725,29 @@ _codex_sandbox() {
             ;;
         args)
             case $line[1] in
-                linux|macos|windows)
+                linux)
                     _arguments \
                         {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--full-auto[Low-friction sandboxed automatic execution]' \
+                        {-h,--help}'[Show help]'
+                    ;;
+                macos)
+                    _arguments \
+                        {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--full-auto[Low-friction sandboxed automatic execution]' \
+                        '--log-denials[Print macOS sandbox denials after exit]' \
+                        {-h,--help}'[Show help]'
+                    ;;
+                windows)
+                    _arguments \
+                        {-c,--config}'[Override config value]:config:' \
+                        '--enable[Enable feature]:feature:' \
+                        '--disable[Disable feature]:feature:' \
+                        '--full-auto[Low-friction sandboxed automatic execution]' \
                         {-h,--help}'[Show help]'
                     ;;
             esac
