@@ -54,6 +54,163 @@ get_plugin_cmd() {
     esac
 }
 
+# Check whether an item exists in an array
+array_contains() {
+    local needle="$1"
+    shift
+    local item
+
+    for item in "$@"; do
+        if [[ "$item" == "$needle" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Extract plugin names from the first plugins=(...) block in .zshrc
+extract_plugins_from_zshrc() {
+    local zshrc="$1"
+
+    awk '
+        function strip_comment(text, cleaned) {
+            cleaned = text
+            sub(/[[:space:]]*#.*/, "", cleaned)
+            return cleaned
+        }
+
+        function emit_tokens(text, cleaned, count, parts, i) {
+            cleaned = strip_comment(text)
+            gsub(/[()]/, " ", cleaned)
+            count = split(cleaned, parts, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                if (parts[i] != "") {
+                    print parts[i]
+                }
+            }
+        }
+
+        {
+            stripped_line = strip_comment($0)
+
+            if (!in_plugins) {
+                if (match(stripped_line, /^[[:space:]]*plugins=\(/)) {
+                    in_plugins = 1
+                    remainder = substr(stripped_line, RLENGTH + 1)
+
+                    if (index(remainder, ")")) {
+                        emit_tokens(substr(remainder, 1, index(remainder, ")") - 1))
+                        exit
+                    }
+
+                    emit_tokens(remainder)
+                }
+            } else {
+                if (index(stripped_line, ")")) {
+                    emit_tokens(substr(stripped_line, 1, index(stripped_line, ")") - 1))
+                    exit
+                }
+
+                emit_tokens(stripped_line)
+            }
+        }
+    ' "$zshrc"
+}
+
+# Append missing plugins to the first plugins=(...) block while preserving comments
+append_plugins_to_zshrc() {
+    local zshrc="$1"
+    shift
+
+    local temp_file
+    temp_file=$(mktemp)
+
+    awk -v plugins_to_add="$*" '
+        BEGIN {
+            raw_count = split(plugins_to_add, raw_plugins, /[[:space:]]+/)
+            add_count = 0
+            for (i = 1; i <= raw_count; i++) {
+                if (raw_plugins[i] != "") {
+                    add_list[++add_count] = raw_plugins[i]
+                }
+            }
+        }
+
+        function strip_comment(text, cleaned) {
+            cleaned = text
+            sub(/[[:space:]]*#.*/, "", cleaned)
+            return cleaned
+        }
+
+        function print_additions(  i) {
+            if (add_count == 0) {
+                return
+            }
+
+            if (!indent_detected) {
+                plugin_indent = "  "
+            }
+
+            for (i = 1; i <= add_count; i++) {
+                print plugin_indent add_list[i]
+            }
+        }
+
+        {
+            line = $0
+            stripped_line = strip_comment(line)
+
+            if (!in_plugins) {
+                if (match(stripped_line, /^[[:space:]]*plugins=\(/)) {
+                    in_plugins = 1
+                    prefix = substr(line, 1, RLENGTH)
+                    remainder = substr(line, RLENGTH + 1)
+                    stripped_remainder = substr(stripped_line, RLENGTH + 1)
+
+                    if (index(stripped_remainder, ")")) {
+                        close_pos = index(stripped_remainder, ")")
+                        before_close = substr(remainder, 1, close_pos - 1)
+                        after_close = substr(remainder, close_pos)
+
+                        for (i = 1; i <= add_count; i++) {
+                            if (before_close ~ /[^[:space:]]$/) {
+                                before_close = before_close " " add_list[i]
+                            } else {
+                                before_close = before_close add_list[i]
+                            }
+                        }
+
+                        print prefix before_close after_close
+                        in_plugins = 0
+                    } else {
+                        print line
+                    }
+                    next
+                }
+            } else {
+                if (!indent_detected && stripped_line !~ /^[[:space:]]*$/ && stripped_line !~ /^[[:space:]]*\)/) {
+                    match(line, /^[[:space:]]*/)
+                    plugin_indent = substr(line, RSTART, RLENGTH)
+                    indent_detected = 1
+                }
+
+                if (index(stripped_line, ")")) {
+                    print_additions()
+                    print line
+                    in_plugins = 0
+                    next
+                }
+            }
+
+            print line
+        }
+    ' "$zshrc" > "$temp_file"
+
+    cat "$temp_file" > "$zshrc"
+    rm -f "$temp_file"
+}
+
 echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║  AI CLI Tools Zsh Completion Installer    ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════╝${NC}"
@@ -175,7 +332,7 @@ for plugin in "${PLUGINS_TO_INSTALL[@]}"; do
     cp "$PLUGIN_FILE" "$TARGET_DIR/"
     echo -e "${GREEN}  ✓${NC} Copied to: $TARGET_DIR/"
 
-    ((STEP++))
+    STEP=$((STEP + 1))
 done
 
 # ==================== Update .zshrc ====================
@@ -186,57 +343,44 @@ echo -e "${BLUE}[$STEP/$TOTAL_STEPS]${NC} Updating .zshrc configuration..."
 ZSHRC="$HOME/.zshrc"
 PLUGINS_ADDED=0
 PLUGINS_SKIPPED=0
+EXISTING_ZSH_PLUGINS=()
+PLUGINS_MISSING=()
+
+if [[ -f "$ZSHRC" ]]; then
+    while IFS= read -r plugin; do
+        if [[ -n "$plugin" ]]; then
+            EXISTING_ZSH_PLUGINS+=("$plugin")
+        fi
+    done < <(extract_plugins_from_zshrc "$ZSHRC")
+fi
 
 for plugin in "${PLUGINS_TO_INSTALL[@]}"; do
-    # Check if plugin already exists (supports multi-line format)
-    if grep -q "^[[:space:]]*${plugin}[[:space:]]*$" "$ZSHRC" || grep -q "^plugins=(.*${plugin}" "$ZSHRC"; then
+    if array_contains "$plugin" "${EXISTING_ZSH_PLUGINS[@]}"; then
         echo -e "${YELLOW}  →${NC} ${plugin} already in .zshrc, skipping"
-        ((PLUGINS_SKIPPED++))
+        PLUGINS_SKIPPED=$((PLUGINS_SKIPPED + 1))
     else
-        # Check if plugins line exists
-        if grep -q "^plugins=(" "$ZSHRC"; then
-            # Backup .zshrc (handle symbolic links)
-            cp -L "$ZSHRC" "${ZSHRC}.backup.$(date +%Y%m%d_%H%M%S)"
-
-            # Check if single-line or multi-line format
-            if grep -q "^plugins=(.*)" "$ZSHRC"; then
-                # Single-line format: plugins=(git brew ...)
-                TEMP_FILE=$(mktemp)
-                sed "s/^plugins=(\(.*\))/plugins=(\1 ${plugin})/" "$ZSHRC" > "$TEMP_FILE"
-            else
-                # Multi-line format: plugins=(\n git\n brew\n ...)
-                # Add plugin before the last )
-                TEMP_FILE=$(mktemp)
-                awk -v plugin="$plugin" '
-                    /^plugins=\(/ { in_plugins=1 }
-                    in_plugins && /^\)/ {
-                        print plugin
-                        in_plugins=0
-                    }
-                    { print }
-                ' "$ZSHRC" > "$TEMP_FILE"
-            fi
-
-            # Write back to file
-            if [[ -L "$ZSHRC" ]]; then
-                # If it's a symbolic link, get the real file path
-                REAL_ZSHRC=$(readlink -f "$ZSHRC" 2>/dev/null || readlink "$ZSHRC")
-                cat "$TEMP_FILE" > "$REAL_ZSHRC"
-            else
-                cat "$TEMP_FILE" > "$ZSHRC"
-            fi
-
-            rm -f "$TEMP_FILE"
-            echo -e "${GREEN}  ✓${NC} Added ${plugin} to plugins array"
-            ((PLUGINS_ADDED++))
-        else
-            echo -e "${RED}  ✗${NC} Cannot find plugins array in .zshrc"
-            echo -e "${YELLOW}  Please manually add '${plugin}' to the plugins array in .zshrc${NC}"
-        fi
+        PLUGINS_MISSING+=("$plugin")
     fi
 done
 
-((STEP++))
+if [[ ${#PLUGINS_MISSING[@]} -gt 0 ]]; then
+    if [[ -f "$ZSHRC" ]] && grep -Eq "^[[:space:]]*plugins=\(" "$ZSHRC"; then
+        cp -L "$ZSHRC" "${ZSHRC}.backup.$(date +%Y%m%d_%H%M%S)"
+        append_plugins_to_zshrc "$ZSHRC" "${PLUGINS_MISSING[@]}"
+
+        for plugin in "${PLUGINS_MISSING[@]}"; do
+            echo -e "${GREEN}  ✓${NC} Added ${plugin} to plugins array"
+            PLUGINS_ADDED=$((PLUGINS_ADDED + 1))
+        done
+    else
+        echo -e "${RED}  ✗${NC} Cannot find plugins array in .zshrc"
+        for plugin in "${PLUGINS_MISSING[@]}"; do
+            echo -e "${YELLOW}  Please manually add '${plugin}' to the plugins array in .zshrc${NC}"
+        done
+    fi
+fi
+
+STEP=$((STEP + 1))
 
 # ==================== Clean Cache ====================
 
@@ -255,7 +399,7 @@ VERIFIED=0
 for plugin in "${PLUGINS_TO_INSTALL[@]}"; do
     if [[ -f "$OMZ_CUSTOM/$plugin/${plugin}.plugin.zsh" ]]; then
         echo -e "${GREEN}✓${NC} ${plugin} plugin file installed"
-        ((VERIFIED++))
+        VERIFIED=$((VERIFIED + 1))
     else
         echo -e "${RED}✗${NC} ${plugin} plugin file installation failed"
     fi
