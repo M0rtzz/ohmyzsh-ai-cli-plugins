@@ -490,7 +490,7 @@ compdef _claude_code claude
 compdef _claude_code cc
 
 # Add common aliases
-alias cc='claude'
+# alias cc='claude'
 alias ccc='claude chat'
 alias cca='claude api'
 alias cccfg='claude config'
